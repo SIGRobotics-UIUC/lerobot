@@ -366,7 +366,8 @@ class OpenCVCamera(Camera):
 
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
             processed_image = cv2.rotate(processed_image, self.rotation)
-
+        elif self.rotation == cv2.ROTATE_180:
+            processed_image = cv2.rotate(processed_image, cv2.ROTATE_180)
         return processed_image
 
     def _read_loop(self):

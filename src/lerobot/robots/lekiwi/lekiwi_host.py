@@ -49,7 +49,7 @@ class LeKiwiHost:
 
 def main():
     logging.info("Configuring LeKiwi")
-    robot_config = LeKiwiConfig()
+    robot_config = LeKiwiConfig(port="/dev/ttyUSB0", id="my_awesome_kiwi")
     robot = LeKiwi(robot_config)
 
     logging.info("Connecting LeKiwi")

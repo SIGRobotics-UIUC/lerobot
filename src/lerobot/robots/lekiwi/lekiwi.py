@@ -25,9 +25,9 @@ import numpy as np
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
+from lerobot.motors.dynamixel import (
+    DynamixelMotorsBus,
+    OperatingMode
 )
 
 from ..robot import Robot
@@ -52,20 +52,20 @@ class LeKiwi(Robot):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = FeetechMotorsBus(
+        self.bus = DynamixelMotorsBus(
             port=self.config.port,
             motors={
                 # arm
-                "arm_shoulder_pan": Motor(1, "sts3215", norm_mode_body),
-                "arm_shoulder_lift": Motor(2, "sts3215", norm_mode_body),
-                "arm_elbow_flex": Motor(3, "sts3215", norm_mode_body),
-                "arm_wrist_flex": Motor(4, "sts3215", norm_mode_body),
-                "arm_wrist_roll": Motor(5, "sts3215", norm_mode_body),
-                "arm_gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
+                "arm_shoulder_pan": Motor(1, "xl430-w250", norm_mode_body),
+                "arm_shoulder_lift": Motor(2, "xl430-w250", norm_mode_body),
+                "arm_elbow_flex": Motor(3, "xl330-m288", norm_mode_body),
+                "arm_wrist_flex": Motor(4, "xl330-m288", norm_mode_body),
+                "arm_wrist_roll": Motor(5, "xl330-m288", norm_mode_body),
+                "arm_gripper": Motor(6, "xl330-m288", MotorNormMode.RANGE_0_100),
                 # base
-                "base_left_wheel": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_back_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_right_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
+                "base_left_wheel": Motor(7, "xl430-w250", MotorNormMode.RANGE_M100_100),
+                "base_back_wheel": Motor(8, "xl430-w250", MotorNormMode.RANGE_M100_100),
+                "base_right_wheel": Motor(9, "xl430-w250", MotorNormMode.RANGE_M100_100),
             },
             calibration=self.calibration,
         )
@@ -132,6 +132,7 @@ class LeKiwi(Robot):
         motors = self.arm_motors + self.base_motors
 
         self.bus.disable_torque(self.arm_motors)
+        self.bus.disable_torque(self.base_motors) # necessary to write to base motors during calib
         for name in self.arm_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
 
@@ -176,11 +177,10 @@ class LeKiwi(Robot):
         self.bus.configure_motors()
         for name in self.arm_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
-            # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-            self.bus.write("P_Coefficient", name, 16)
-            # Set I_Coefficient and D_Coefficient to default value 0 and 32
-            self.bus.write("I_Coefficient", name, 0)
-            self.bus.write("D_Coefficient", name, 32)
+        # Copied PID changes from koch arm code
+        self.bus.write("Position_P_Gain", "arm_elbow_flex", 1500)
+        self.bus.write("Position_I_Gain", "arm_elbow_flex", 0)
+        self.bus.write("Position_D_Gain", "arm_elbow_flex", 600)
 
         for name in self.base_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)
@@ -193,6 +193,18 @@ class LeKiwi(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
+    @staticmethod
+    def _degps_to_rpm(degps: float) -> int:
+        """
+        Convert degrees per second to revolutions per minute (RPM).
+        """
+        return int(degps * 60 / 360)
+    @staticmethod
+    def _rpm_to_degps(rpm: int) -> float:
+        """
+        Convert revolutions per minute (RPM) to degrees per second.
+        """
+        return rpm * 360 / 60.0
     @staticmethod
     def _degps_to_raw(degps: float) -> int:
         steps_per_deg = 4096.0 / 360.0
@@ -219,7 +231,7 @@ class LeKiwi(Robot):
         theta: float,
         wheel_radius: float = 0.05,
         base_radius: float = 0.125,
-        max_raw: int = 3000,
+        max_raw: int = 10000,
     ) -> dict:
         """
         Convert desired body-frame velocities into wheel raw commands.
@@ -268,9 +280,10 @@ class LeKiwi(Robot):
             scale = max_raw / max_raw_computed
             wheel_degps = wheel_degps * scale
 
-        # Convert each wheel’s angular speed (deg/s) to a raw integer.
-        wheel_raw = [self._degps_to_raw(deg) for deg in wheel_degps]
-
+        # Convert each wheel’s angular speed (deg/s) to a raw rpm to send to dynamixel
+        # TODO: check unit conversion is correct, currently good enough to make it move
+        wheel_raw = [self._degps_to_rpm(deg) for deg in wheel_degps]
+        print(f"Wheel raw commands: {wheel_raw}")
         return {
             "base_left_wheel": wheel_raw[0],
             "base_back_wheel": wheel_raw[1],
@@ -298,11 +311,12 @@ class LeKiwi(Robot):
         """
 
         # Convert each raw command back to an angular speed in deg/s.
+        # TODO: check unit conversion is correct, currently good enough to make it move
         wheel_degps = np.array(
             [
-                self._raw_to_degps(left_wheel_speed),
-                self._raw_to_degps(back_wheel_speed),
-                self._raw_to_degps(right_wheel_speed),
+                self._rpm_to_degps(left_wheel_speed),
+                self._rpm_to_degps(back_wheel_speed),
+                self._rpm_to_degps(right_wheel_speed),
             ]
         )
 
