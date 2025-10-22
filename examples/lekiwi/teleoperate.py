@@ -333,7 +333,7 @@ def main():
     leader_arm.connect()
     keyboard.connect()
 
-    _init_rerun(session_name="lekiwi_teleop")
+    init_rerun(session_name="lekiwi_teleop")
 
     if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
         raise ValueError("Robot, leader arm of keyboard is not connected!")
